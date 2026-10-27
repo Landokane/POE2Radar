@@ -230,6 +230,7 @@ public sealed class RadarApp : IDisposable
     private List<string> _selectedSnapshot = new();
     private IReadOnlyList<LegendEntry> _legend = Array.Empty<LegendEntry>();
     private bool _overlayHadContent;
+    private DateTime _nextOverlayToggleAt = DateTime.MinValue;
 
     // ── Phase 1: exploration fog + draw-only path guidance (all gated by RadarSettings flags). ──
     // Unified navigation targets: a single list built each world tick from BOTH terrain-tile
@@ -1204,7 +1205,7 @@ public sealed class RadarApp : IDisposable
 
         var realActive = _gameHwnd != 0 && GetForegroundWindow() == _gameHwnd;
         // "Always show" draws the overlay even when PoE2 isn't focused (for dashboard calibration).
-        var drawActive = realActive || _settings.AlwaysShowOverlay;
+        var drawActive = _settings.OverlayVisible && (realActive || _settings.AlwaysShowOverlay);
         var atlasProj = AtlasProjection(); // resolution-correct (auto from window height) or manual calib
         var ctx = new RenderContext(
             InGame: inGame,
@@ -1744,6 +1745,15 @@ public sealed class RadarApp : IDisposable
             _settings.Save();
             Console.WriteLine($"\nAuto-flask: {(_autoFlask ? "ON" : "OFF")}");
         }
+        // F11 toggles local overlay visibility and persists the preference. Capture behavior is unchanged.
+        if (Down(0x7A) && DateTime.UtcNow >= _nextOverlayToggleAt) // F11
+        {
+            _settings.OverlayVisible = !_settings.OverlayVisible;
+            _settings.Save();
+            _nextOverlayToggleAt = DateTime.UtcNow.AddMilliseconds(350);
+            Console.WriteLine($"\nOverlay visibility: {(_settings.OverlayVisible ? "ON" : "OFF")}");
+        }
+
         // F9 quits the overlay (besides the tray-icon Exit).
         if (Down(0x78)) { Console.WriteLine("\nF9 — exiting."); RequestShutdown(); }
 
