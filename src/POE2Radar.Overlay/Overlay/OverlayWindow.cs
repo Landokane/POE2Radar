@@ -50,7 +50,7 @@ public sealed class OverlayWindow : IDisposable
     private bool _hotkeyRegistered;
     private bool _overlayVisible = true;
 
-    /// <summary>Raised whenever the user toggles the overlay with Ctrl+Shift+O.</summary>
+    /// <summary>Raised whenever the user toggles the overlay with F11.</summary>
     public Action<bool>? OnVisibilityChanged;
 
     public bool IsOverlayVisible => _overlayVisible;
@@ -96,9 +96,9 @@ public sealed class OverlayWindow : IDisposable
         RegisterWindowClass();
         CreateOverlayHwnd();
         _hotkeyRegistered = OverlayNative.RegisterHotKey(_hwnd, OverlayToggleHotkeyId,
-            OverlayNative.MOD_CONTROL | OverlayNative.MOD_SHIFT, OverlayNative.VK_O);
+            0, OverlayNative.VK_F11);
         if (!_hotkeyRegistered)
-            Console.Error.WriteLine("Could not register Ctrl+Shift+O; another app may already use this hotkey.");
+            Console.Error.WriteLine("Could not register F11; another application may already use this hotkey.");
         AddTrayIcon();
         InitializeDirect2D();
     }
