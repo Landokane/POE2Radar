@@ -46,6 +46,14 @@ public sealed class OverlayWindow : IDisposable
     private const uint WmTrayCallback = OverlayNative.WM_APP + 1;
     private const uint MenuExitId = 1;
     private bool _trayAdded;
+    private const int OverlayToggleHotkeyId = 0x504F45;
+    private bool _hotkeyRegistered;
+    private bool _overlayVisible = true;
+
+    /// <summary>Raised whenever the user toggles the overlay with Ctrl+Shift+O.</summary>
+    public Action<bool>? OnVisibilityChanged;
+
+    public bool IsOverlayVisible => _overlayVisible;
 
     private ID2D1Factory? _d2dFactory;
     private IDWriteFactory? _dwriteFactory;
@@ -87,6 +95,10 @@ public sealed class OverlayWindow : IDisposable
         _wndProcDelegate = WndProc;
         RegisterWindowClass();
         CreateOverlayHwnd();
+        _hotkeyRegistered = OverlayNative.RegisterHotKey(_hwnd, OverlayToggleHotkeyId,
+            OverlayNative.MOD_CONTROL | OverlayNative.MOD_SHIFT, OverlayNative.VK_O);
+        if (!_hotkeyRegistered)
+            Console.Error.WriteLine("Could not register Ctrl+Shift+O; another app may already use this hotkey.");
         AddTrayIcon();
         InitializeDirect2D();
     }
@@ -248,7 +260,7 @@ public sealed class OverlayWindow : IDisposable
     /// </summary>
     public void Present()
     {
-        if (_hwnd == 0 || _memDC == 0) return;
+        if (_hwnd == 0 || _memDC == 0 || !_overlayVisible) return;
 
         OverlayNative.GdiFlush();
         var screenDC = OverlayNative.GetDC(0);
@@ -329,6 +341,11 @@ public sealed class OverlayWindow : IDisposable
 
     private nint WndProc(nint hwnd, uint msg, nuint wParam, nint lParam)
     {
+        if (msg == OverlayNative.WM_HOTKEY && (int)wParam == OverlayToggleHotkeyId)
+        {
+            SetOverlayVisible(!_overlayVisible);
+            return 0;
+        }
         if (msg == WmTrayCallback)
         {
             var ev = (uint)(lParam & 0xFFFF);
@@ -352,8 +369,22 @@ public sealed class OverlayWindow : IDisposable
         return OverlayNative.DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
+    /// <summary>Show or hide the overlay window without affecting the game or its input.</summary>
+    public void SetOverlayVisible(bool visible)
+    {
+        if (_hwnd == 0 || _overlayVisible == visible) return;
+        _overlayVisible = visible;
+        OverlayNative.ShowWindow(_hwnd, visible ? OverlayNative.SW_SHOW : OverlayNative.SW_HIDE);
+        OnVisibilityChanged?.Invoke(visible);
+    }
+
     public void Dispose()
     {
+        if (_hotkeyRegistered && _hwnd != 0)
+        {
+            OverlayNative.UnregisterHotKey(_hwnd, OverlayToggleHotkeyId);
+            _hotkeyRegistered = false;
+        }
         RemoveTrayIcon();
         _renderTarget?.Dispose();
         _dwriteFactory?.Dispose();
