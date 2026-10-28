@@ -73,14 +73,14 @@ Reading another process generally requires running the overlay **as Administrato
 To **exit**: right-click the **POE2Radar system-tray icon → Exit**, or press **F9** (or close the
 console window).
 
-Hotkeys: **Ctrl+Shift+O** toggles the overlay window (useful for stream privacy); **F8** toggles auto-flask; **F9** quits; **F12** opens the web dashboard; **F6** routes to
+Hotkeys: **F11** toggles the overlay window (useful for stream privacy); **F8** toggles auto-flask; **F9** quits; **F12** opens the web dashboard; **F6** routes to
 the nearest landmark/POI and **F7** clears routes; **F10** (with the Atlas open) inspects the
 hovered tile and sets a route start/end. All other settings live in the dashboard (no calibration
 hotkeys, to avoid accidental presses).
 
 ### Streaming the overlay
 
-- Press **Ctrl+Shift+O** to hide/show the radar overlay globally. This hotkey is registered by Windows and works while another app (including PoE2) has focus, provided another application has not claimed the same shortcut.
+- Press **F11** to hide/show the radar overlay globally. This hotkey is registered by Windows and works while another app (including PoE2) has focus, provided another application has not claimed the same shortcut.
 - In OBS, use **Display Capture** (or capture the monitor containing both PoE2 and the overlay) if you want the external transparent overlay included. **Game Capture may not capture external overlay windows.** If sharing the game directly in Discord, Discord's application capture may likewise omit external overlays; test with a private stream first. To reliably share the composited result, capture the display in OBS and stream/share the OBS output.
 - The toggle only hides/shows the overlay window; it does not stop the radar process or change game input.
 
