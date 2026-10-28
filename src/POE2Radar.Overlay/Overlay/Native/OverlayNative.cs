@@ -23,7 +23,7 @@ internal static partial class OverlayNative
     // RegisterHotKey modifiers and the global overlay toggle (Ctrl+Shift+O).
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_SHIFT = 0x0004;
-    public const uint VK_O = 0x4F;
+    public const uint VK_F11 = 0x7A;
 
     // ShowWindow commands
     public const int SW_SHOW = 5;
