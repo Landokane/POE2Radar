@@ -20,6 +20,11 @@ internal static partial class OverlayNative
     public const uint LWA_COLORKEY = 0x00000001;
     public const uint LWA_ALPHA    = 0x00000002;
 
+    // RegisterHotKey modifiers and the global overlay toggle (Ctrl+Shift+O).
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT = 0x0004;
+    public const uint VK_O = 0x4F;
+
     // ShowWindow commands
     public const int SW_SHOW = 5;
     public const int SW_HIDE = 0;
@@ -42,6 +47,7 @@ internal static partial class OverlayNative
 
     // Common messages
     public const uint WM_DESTROY = 0x0002;
+    public const uint WM_HOTKEY = 0x0312;
     public const uint WM_QUIT    = 0x0012;
     public const uint WM_PAINT   = 0x000F;
     public const uint WM_SIZE    = 0x0005;
@@ -95,6 +101,14 @@ internal static partial class OverlayNative
         uint dwExStyle, string lpClassName, string lpWindowName,
         uint dwStyle, int x, int y, int nWidth, int nHeight,
         nint hWndParent, nint hMenu, nint hInstance, nint lpParam);
+
+    [LibraryImport("user32.dll", EntryPoint = "RegisterHotKey")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint virtualKey);
+
+    [LibraryImport("user32.dll", EntryPoint = "UnregisterHotKey")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool UnregisterHotKey(nint hwnd, int id);
 
     [LibraryImport("user32.dll", EntryPoint = "DestroyWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
