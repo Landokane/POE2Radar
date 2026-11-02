@@ -73,7 +73,7 @@ Reading another process generally requires running the overlay **as Administrato
 To **exit**: right-click the **POE2Radar system-tray icon → Exit**, or press **F9** (or close the
 console window).
 
-Hotkeys: **F8** toggles auto-flask; **F9** quits; **F12** opens the web dashboard; **F6** routes to
+Hotkeys: **F8** toggles auto-flask; **F9** quits; **F11** toggles local overlay visibility (saved across restarts); **F12** opens the web dashboard; **F6** routes to
 the nearest landmark/POI and **F7** clears routes; **F10** (with the Atlas open) inspects the
 hovered tile and sets a route start/end. All other settings live in the dashboard (no calibration
 hotkeys, to avoid accidental presses).

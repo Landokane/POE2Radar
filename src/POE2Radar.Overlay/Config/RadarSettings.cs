@@ -63,6 +63,9 @@ public sealed class RadarSettings
     public float OffX { get; set; } = 0f;
     public float OffY { get; set; } = 0f;
 
+    // Master local visibility toggle (F11). Ordinary local display control; not a capture-exclusion feature.
+    public bool OverlayVisible { get; set; } = true;
+
     // Draw the overlay even when PoE2 isn't the foreground window (e.g. while tweaking the dashboard).
     // Auto-flask stays foreground-gated regardless (safety). Default off (overlay hides when unfocused).
     public bool AlwaysShowOverlay { get; set; } = false;
