@@ -1,0 +1,22 @@
+name: Validate ImGui Control Menu
+
+on:
+  push:
+    branches:
+      - feature/imgui-control-panel
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore POE2Radar.slnx
+      - name: Build (does not publish or release)
+        run: dotnet build POE2Radar.slnx --configuration Release --no-restore
