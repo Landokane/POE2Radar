@@ -95,7 +95,7 @@ existing Direct2D overlay, web dashboard, and hotkeys.
 - **Discord is not guaranteed** to honor the flag under every capture mode.
   Verify using a second account/device viewing the actual stream before relying on it.
 - The menu library is installed from NuGet (`ClickableTransparentOverlay` 11.1.0,
-  which provides ImGui.NET). This branch does not ship a release automatically.
+  which provides ImGui.NET). Its patched ImageSharp 3.2.0 dependency is pinned\n  transitively through \`src/POE2Radar.Overlay/Directory.Packages.props\`, without a\n  direct ImageSharp reference or disabling vulnerability auditing.\n  This branch does not ship a release automatically.
 
 ## Architecture
 
