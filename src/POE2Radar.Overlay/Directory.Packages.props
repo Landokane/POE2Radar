@@ -1,0 +1,18 @@
+<Project>
+  <!-- Scope central package management to the Overlay project only. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Upgrade a TRANSITIVE ImageSharp dependency without introducing a direct
+         PackageReference. Six Labors limits build-time license-key enforcement to
+         direct ImageSharp consumers. Keep NuGet vulnerability auditing enabled. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageVersion Include="ClickableTransparentOverlay" Version="11.1.0" />
+    <!-- 3.2.0 is the security-fixed v3 release. Stays major-compatible with
+         ClickableTransparentOverlay's 3.1.6 requirement. -->
+    <PackageVersion Include="SixLabors.ImageSharp" Version="3.2.0" />
+  </ItemGroup>
+</Project>
