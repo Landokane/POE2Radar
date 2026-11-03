@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <PackageReference Include="Vortice.Direct2D1" Version="3.*" />
+    <!-- Dedicated ImGui.NET/Direct3D11 controls window; existing radar stays Direct2D. -->
+    <PackageReference Include="ClickableTransparentOverlay" Version="11.1.0" />
     <!-- WIC bindings (Vortice.WIC namespace) ship inside Vortice.Direct2D1 — no separate package. -->
   </ItemGroup>
 
