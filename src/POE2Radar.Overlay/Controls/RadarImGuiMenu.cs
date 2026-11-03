@@ -84,6 +84,14 @@ internal sealed class RadarImGuiMenu : Overlay
 
     protected override Task PostInitialized()
     {
+        // Earlier Windows builds turn WDA_EXCLUDEFROMCAPTURE into WDA_MONITOR (a black rectangle).
+        // Refuse to show a purportedly private menu in that case.
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
+        {
+            Console.Error.WriteLine("ImGui menu DISABLED: Windows 10 build 19041 or newer is required for capture exclusion.");
+            return Task.CompletedTask;
+        }
+
         // This executes on the ImGui window's own render thread, AFTER its HWND is created.
         var set = SetWindowDisplayAffinity(window.Handle, WdaExcludeFromCapture);
         var verified = set && GetWindowDisplayAffinity(window.Handle, out var actual)
