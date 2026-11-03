@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Runtime.InteropServices;
 using NumVec2 = System.Numerics.Vector2;
 using POE2Radar.Core;
 using POE2Radar.Core.Game;
 using POE2Radar.Overlay.Config;
+using POE2Radar.Overlay.Controls;
 using POE2Radar.Overlay.Input;
 using POE2Radar.Overlay.Native;
 using POE2Radar.Overlay.Navigation;
@@ -40,6 +42,10 @@ public sealed class RadarApp : IDisposable
     private readonly OverlayRenderer _renderer;
     private readonly ApiServer _api;
     private readonly RadarSettings _settings;
+    // The ImGui menu owns its own capture-excluded top-level window; radar graphics are unchanged.
+    private RadarImGuiMenu? _menu;
+    private Task? _menuStartup;
+    private readonly ConcurrentQueue<MenuDisplayOptions> _menuUpdates = new();
     private readonly HiddenEntities _hidden;
     private readonly WatchedEntities _watched;
     private readonly LandmarkPatterns _landmarkPatterns;
@@ -231,6 +237,7 @@ public sealed class RadarApp : IDisposable
     private IReadOnlyList<LegendEntry> _legend = Array.Empty<LegendEntry>();
     private bool _overlayHadContent;
     private DateTime _nextOverlayToggleAt = DateTime.MinValue;
+    private DateTime _nextMenuToggleAt = DateTime.MinValue;
 
     // ── Phase 1: exploration fog + draw-only path guidance (all gated by RadarSettings flags). ──
     // Unified navigation targets: a single list built each world tick from BOTH terrain-tile
@@ -559,6 +566,7 @@ public sealed class RadarApp : IDisposable
         Console.WriteLine("Hotkeys: F6=add nearest path target  F7=clear path targets  "
                           + "F8=auto-flask  F9=quit  F12=open dashboard");
         Console.WriteLine($"         F11=toggle overlay visibility (currently {(_settings.OverlayVisible ? "ON" : "OFF")})");
+        Console.WriteLine("         Insert=toggle private ImGui control menu (only if capture exclusion is enabled)");
         Console.WriteLine("         F10 (Atlas open) = inspect hovered tile (dumps map name + code + content"
                           + " to console for web-UI filters) and set route START->END (3rd press resets)");
         // Best-effort version check against GitHub (non-blocking; never fails startup).
@@ -599,9 +607,43 @@ public sealed class RadarApp : IDisposable
         };
     }
 
+    // The menu only queues changes; radar settings are updated and persisted on the radar's render thread.
+    private MenuDisplayOptions MenuOptions() => MenuDisplayOptions.From(_settings);
+
+    private void ApplyMenuUpdates()
+    {
+        while (_menuUpdates.TryDequeue(out var d))
+        {
+            _settings.OverlayVisible = d.OverlayVisible;
+            _settings.ShowMonsters = d.ShowMonsters;
+            _settings.ShowTerrain = d.ShowTerrain;
+            _settings.ShowPlayerBlip = d.ShowPlayerBlip;
+            _settings.ShowPath = d.ShowPath;
+            _settings.HpBarMagic = d.HpBarMagic;
+            _settings.HpBarRare = d.HpBarRare;
+            _settings.HpBarUnique = d.HpBarUnique;
+            _settings.FpsCap = Math.Clamp(d.FpsCap, 0, 240);
+            _settings.Save();
+            Console.WriteLine("ImGui menu: display settings applied.");
+        }
+    }
+
     public void Run()
     {
         _gameHwnd = OverlayNative.FindWindowForProcess(_process.ProcessId);
+        // Independent Direct3D11/ImGui menu. Capture exclusion is applied only to its window.
+        // If Windows refuses capture exclusion the menu stays hidden (fail closed).
+        try
+        {
+            _menu = new RadarImGuiMenu(MenuOptions, d => _menuUpdates.Enqueue(d),
+                OpenDashboard, RequestShutdown);
+            _menuStartup = _menu.Start();
+            _ = _menuStartup.ContinueWith(t =>
+                Console.Error.WriteLine($"ImGui menu failed to start: {t.Exception?.GetBaseException().Message}"),
+                TaskContinuationOptions.OnlyOnFaulted);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"ImGui menu unavailable: {ex.Message}"); }
+
         // The heavy world-rate walk runs on its OWN thread (Phase 3); the render loop below only does
         // fast per-frame reads + draw, so a slow world pass (big pack, zone load) never hitches frames.
         _worldThread = new Thread(WorldLoop) { IsBackground = true, Name = "POE2Radar.World" };
@@ -1074,6 +1116,7 @@ public sealed class RadarApp : IDisposable
     private void Tick()
     {
         var t0 = System.Diagnostics.Stopwatch.GetTimestamp();   // no per-frame Stopwatch allocation
+        ApplyMenuUpdates();
         HandleHotkeys();
 
         var inGame = _liveRender.TryResolve(out var inGameState, out var areaInstance, out var localPlayer);
@@ -1753,6 +1796,13 @@ public sealed class RadarApp : IDisposable
             _settings.Save();
             _nextOverlayToggleAt = DateTime.UtcNow.AddMilliseconds(350);
             Console.WriteLine($"\nOverlay visibility: {(_settings.OverlayVisible ? "ON" : "OFF")}");
+        }
+        // Insert toggles the ImGui menu. The game radar and its F11 toggle remain independent.
+        if (Down(0x2D) && DateTime.UtcNow >= _nextMenuToggleAt) // VK_INSERT
+        {
+            _nextMenuToggleAt = DateTime.UtcNow.AddMilliseconds(350);
+            if (_menu is null || !_menu.TryToggleVisible())
+                Console.Error.WriteLine("Private menu unavailable: Windows capture exclusion not confirmed.");
         }
 
         // F9 quits the overlay (besides the tray-icon Exit).
@@ -2837,6 +2887,16 @@ public sealed class RadarApp : IDisposable
     {
         _shutdown = true;
         _worldThread?.Join(1000);   // let the background world loop observe _shutdown and exit
+        if (_menu is not null)
+        {
+            try
+            {
+                _menu.Close();
+                // Avoid joining an uninitialized/failed UI thread.
+                if (_menuStartup is { IsCompletedSuccessfully: true }) _menu.Dispose();
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"ImGui menu shutdown: {ex.Message}"); }
+        }
         _modCatalog.Flush(); // persist any mods seen since the last debounced write
         _replanner.Dispose();
         _api.Dispose();
