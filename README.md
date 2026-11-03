@@ -78,6 +78,25 @@ the nearest landmark/POI and **F7** clears routes; **F10** (with the Atlas open)
 hovered tile and sets a route start/end. All other settings live in the dashboard (no calibration
 hotkeys, to avoid accidental presses).
 
+## Private native ImGui control menu (feature branch)
+
+The `feature/imgui-control-panel` branch includes a small **ImGui.NET / Direct3D11**
+control menu in a **separate top-level Windows window**. The radar itself retains its
+existing Direct2D overlay, web dashboard, and hotkeys.
+
+- Press **Insert** to open/close the native control menu. **F11** still toggles local
+  radar visibility. The ImGui menu can adjust radar/monster/terrain/health-bar/FPS settings;
+  press **Apply Changes** to persist them to the existing JSON settings.
+- The menu requests `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` so it is left out
+  of **supported Windows capture**. The setting affects only the menu's own window, not
+  the radar, PoE2, or the dashboard.
+- **Windows 10 build 19041+ or Windows 11 is required.** If Windows cannot confirm
+  the exclusion flag, the menu remains hidden rather than claiming capture privacy.
+- **Discord is not guaranteed** to honor the flag under every capture mode.
+  Verify using a second account/device viewing the actual stream before relying on it.
+- The menu library is installed from NuGet (`ClickableTransparentOverlay` 11.1.0,
+  which provides ImGui.NET). This branch does not ship a release automatically.
+
 ## Architecture
 
 Three projects:
