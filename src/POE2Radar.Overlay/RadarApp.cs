@@ -1249,7 +1249,7 @@ public sealed class RadarApp : IDisposable
 
         var realActive = _gameHwnd != 0 && GetForegroundWindow() == _gameHwnd;
         // "Always show" draws the overlay even when PoE2 isn't focused (for dashboard calibration).
-        var drawActive = _settings.OverlayVisible && (realActive || _settings.AlwaysShowOverlay);
+        var drawActive = _settings.OverlayVisible && (realActive || _settings.AlwaysShowOverlay || _menu?.Visible == true);
         var atlasProj = AtlasProjection(); // resolution-correct (auto from window height) or manual calib
         var ctx = new RenderContext(
             InGame: inGame,
