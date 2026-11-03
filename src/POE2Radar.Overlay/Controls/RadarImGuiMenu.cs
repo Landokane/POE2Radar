@@ -72,6 +72,8 @@ internal sealed class RadarImGuiMenu : Overlay
     }
 
     /// <summary>Fail closed: never show the private menu unless Windows accepted capture exclusion.</summary>
+    public bool Visible => _visible && _captureExcluded;
+
     public bool TryToggleVisible()
     {
         if (!_captureExcluded) return false;
