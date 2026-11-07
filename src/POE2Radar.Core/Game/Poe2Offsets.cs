@@ -62,7 +62,7 @@ public static class Poe2
     {
         public const int AreaInfoPtr      = 0x0A0; // 2026-11-06 candidate: WorldAreas Code+Name verified in Hideout and Qimah Reservoir. Prior value retained in git history.
         public const int LocalPlayer      = 0x5D8; // 2026-11-06 candidate: character metadata verified in Hideout and Qimah Reservoir. Prior value retained in git history.
-        public const int ServerDataPtr    = 0x5B0;  // ✓ → ServerData (gateway to player inventories; +0x20 here = LocalPlayer @ 0x5D0). 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x598); 2026-06-25 shifted +0x18 (was 0x580).
+        public const int ServerDataPtr    = 0x5B8; // 2026-11-06 live probe: player at +0x20 matches LocalPlayer and ServerData.League reads 'Forbidden Rites'; old 0x5B0 was null.
         public const int AwakeEntities    = 0x718; // 2026-11-06 candidate: entity StdMap candidate sampled in two zones; awake/sleeping distinction not independently verified. Prior value retained in git history.
         public const int SleepingEntities = 0x728; // 2026-11-06 candidate: entity StdMap candidate sampled in two zones; awake/sleeping distinction not independently verified. Prior value retained in git history.
         public const int TerrainMetadata  = 0x8F8; // 2026-11-06 candidate: terrain grid dimensions and byte stride internally consistent in two zones. Prior value retained in git history.
