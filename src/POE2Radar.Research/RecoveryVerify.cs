@@ -29,11 +29,20 @@ internal static class RecoveryVerify
     public static int Run(ProcessHandle process, MemoryReader reader)
     {
         var slot = ResolveSlot(process, reader);
-        if (slot == 0) { Console.WriteLine("Could not resolve the GameState slot — run --recover first."); return 1; }
-
-        var live = new Poe2Live(reader, slot);
-        if (!live.TryResolve(out var igs, out var ai, out var lp))
-        { Console.WriteLine("Chain does not resolve — run --recover first."); return 1; }
+        nint igs = 0, ai = 0, lp = 0;
+        if (slot == 0 || !new Poe2Live(reader, slot).TryResolve(out igs, out ai, out lp))
+        {
+            Console.WriteLine("Committed chain unavailable; searching for a live character chain...");
+            if (!RecoveryChain.TryFind(process, reader, out igs, out ai, out lp,
+                out var aiOffset, out var lpOffset))
+            {
+                Console.WriteLine("Could not validate a live player chain. Enter a zone and run --recover --deep for diagnosis.");
+                return 1;
+            }
+            Console.WriteLine($"RECOVERED chain: InGameState.AreaInstanceData = 0x{aiOffset:X3}, " +
+                              $"AreaInstance.LocalPlayer = 0x{lpOffset:X3}");
+            Console.WriteLine("Recovered offsets are candidates only; no source files were modified.");
+        }
 
         Console.WriteLine("\n=== STAGE 3: field re-validation ===\n");
         Console.WriteLine($"InGameState 0x{igs:X}  AreaInstance 0x{ai:X}  LocalPlayer 0x{lp:X}\n");
