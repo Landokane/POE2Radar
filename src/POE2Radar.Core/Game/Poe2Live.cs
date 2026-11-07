@@ -289,8 +289,14 @@ public sealed class Poe2Live
                 $"0x{Poe2.Life.Health:X}->0x{_healthOff:X} (life flask + HP bars keep working). Update " +
                 $"Poe2.Life + re-validate (Research --vitals).");
 
-        // ES self-heals the same way; if it can't be confirmed we suppress the read (safe: ES% → 100).
-        var es = ResolveVitalOffset(lifeComp, Poe2.Life.EnergyShield);
+        // A character with no Energy Shield legitimately reports 0/0 at the configured
+        // offset. That is ambiguous, NOT evidence of drift: searching nearby can select
+        // unrelated pools (observed false match at +0x264). Suppress ES automation
+        // instead of adopting a candidate or claiming the configured offset is broken.
+        var esZeroOrUnknown = _reader.TryReadStruct<VitalStruct>(
+            lifeComp + Poe2.Life.EnergyShield, out var configuredEs)
+            && configuredEs.Current == 0 && configuredEs.Max == 0;
+        var es = esZeroOrUnknown ? -1 : ResolveVitalOffset(lifeComp, Poe2.Life.EnergyShield);
         _esOffKnown = es >= 0;
         if (es >= 0)
         {
@@ -301,8 +307,11 @@ public sealed class Poe2Live
         }
         else
         {
-            Console.WriteLine($"Poe2Live: Life EnergyShield offset (0x{Poe2.Life.EnergyShield:X}) couldn't be confirmed — " +
-                "ES flask trigger suppressed (reads as full) until the table is updated (Research --vitals).");
+            Console.WriteLine(esZeroOrUnknown
+                ? "Poe2Live: Energy Shield reads 0/0 at the configured offset; zero-capacity ES is possible. " +
+                  "No auto-relocation; ES-based auto-flask trigger suppressed until a nonzero reading is verified."
+                : $"Poe2Live: Life EnergyShield offset (0x{Poe2.Life.EnergyShield:X}) couldn't be confirmed — " +
+                  "ES flask trigger suppressed (reads as full) until the table is updated (Research --vitals).");
         }
 
         // Mana: best-effort relocation only. The mana flask is never gated on a confident read — if it

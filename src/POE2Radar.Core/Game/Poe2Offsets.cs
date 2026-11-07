@@ -60,13 +60,13 @@ public static class Poe2
     /// </summary>
     public static class AreaInstance
     {
-        public const int AreaInfoPtr      = 0x098;  // ✓ → WorldAreas row (see Poe2.AreaInfo); Code validated 'P3_3'/'Glacial Tarn'. 2026-09-05 league patch shifted -0x08 (was 0x0A0, which now holds the WorldAreas.dat file object, not the row).
-        public const int LocalPlayer      = 0x5D0;  // ✓ → player Entity (value-scanned player matched here). 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x5B8); 2026-06-25 shifted +0x18 (was 0x5A0).
-        public const int ServerDataPtr    = 0x5B0;  // ✓ → ServerData (gateway to player inventories; +0x20 here = LocalPlayer @ 0x5D0). 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x598); 2026-06-25 shifted +0x18 (was 0x580).
-        public const int AwakeEntities    = 0x6F0;  // ✓ StdMap of live entities (id→EntityPtr). 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x6D8); 2026-06-25 shifted +0x18 (was 0x6C0).
-        public const int SleepingEntities = 0x700;  // ✓ StdMap. 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x6E8); 2026-06-25 shifted +0x18 (was 0x6D0).
-        public const int TerrainMetadata  = 0x8D0;  // ✓ TerrainStruct base. 2026-09-05 league patch shifted +0x10; 2026-07-16 shifted +0x08 (was 0x8B8); 2026-06-25 shifted +0x18 (was 0x8A0).
-        public const int CurrentAreaLevel = 0x0BC;  // ✓ int — per-area. 2026-09-05 league patch shifted -0x08 (was 0x0C4, which now reads 0).
+        public const int AreaInfoPtr      = 0x0A0; // 2026-11-06 candidate: WorldAreas Code+Name verified in Hideout and Qimah Reservoir. Prior value retained in git history.
+        public const int LocalPlayer      = 0x5D8; // 2026-11-06 candidate: character metadata verified in Hideout and Qimah Reservoir. Prior value retained in git history.
+        public const int ServerDataPtr    = 0x5B8; // 2026-11-06 live probe: player at +0x20 matches LocalPlayer and ServerData.League reads 'Forbidden Rites'; old 0x5B0 was null.
+        public const int AwakeEntities    = 0x718; // 2026-11-06 candidate: entity StdMap candidate sampled in two zones; awake/sleeping distinction not independently verified. Prior value retained in git history.
+        public const int SleepingEntities = 0x728; // 2026-11-06 candidate: entity StdMap candidate sampled in two zones; awake/sleeping distinction not independently verified. Prior value retained in git history.
+        public const int TerrainMetadata  = 0x8F8; // 2026-11-06 candidate: terrain grid dimensions and byte stride internally consistent in two zones. Prior value retained in git history.
+        public const int CurrentAreaLevel = 0x0C4; // 2026-11-06 candidate: Qimah Reservoir displayed level 64 and +0x0C4 read 64; verify in additional zones. Prior value retained in git history.
         public const int CurrentAreaHash  = 0x114;  // ✓ uint — per-area random hash. 2026-09-05 league patch shifted -0x08 (was 0x11C).
     }
 
