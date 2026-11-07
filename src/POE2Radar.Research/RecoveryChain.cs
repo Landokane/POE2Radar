@@ -61,6 +61,10 @@ internal static class RecoveryChain
                         if (details == 0 || Ptr(reader, lp + Poe2.Entity.ComponentList) == 0) continue;
                         var name = ReadName(reader, details + Poe2.EntityDetails.Name);
                         if (!name.StartsWith("Metadata/Characters/", StringComparison.Ordinal)) continue;
+                        // A character-shaped entity can also be referenced by unrelated
+                        // structures. Require independent area evidence before accepting it.
+                        if (!HasAreaCode(reader, ai) && !HasConsistentTerrain(reader, ai))
+                            continue;
                         igsResult = igs;
                         aiResult = ai;
                         lpResult = lp;
@@ -70,6 +74,49 @@ internal static class RecoveryChain
                     }
                 }
             }
+        }
+        return false;
+    }
+
+    // WorldAreas row: pointers to UTF-16 Code and Name at offsets 0 and 8.
+    private static bool HasAreaCode(MemoryReader reader, nint ai)
+    {
+        for (var off = 0x80; off <= 0x200; off += 8)
+        {
+            var row = Ptr(reader, ai + off);
+            if (row == 0) continue;
+            var codePtr = Ptr(reader, row);
+            var namePtr = Ptr(reader, row + 8);
+            if (codePtr == 0 || namePtr == 0) continue;
+            var code = reader.ReadStringUtf16(codePtr, 40);
+            var name = reader.ReadStringUtf16(namePtr, 60);
+            if (code.Length is < 3 or > 40 || name.Length is < 3 or > 60) continue;
+            if (code.All(ch => char.IsLetterOrDigit(ch) || ch == '_') &&
+                name.All(ch => ch >= ' ' && ch <= '~'))
+                return true;
+        }
+        return false;
+    }
+
+    // Independently require terrain dimensions, stride and vector length to agree.
+    private static bool HasConsistentTerrain(MemoryReader reader, nint ai)
+    {
+        for (var off = 0x780; off <= 0xA80; off += 8)
+        {
+            var b = ai + off;
+            if (!reader.TryReadStruct<long>(b + Poe2.Terrain.TotalTiles, out var tx) ||
+                !reader.TryReadStruct<long>(b + Poe2.Terrain.TotalTiles + 8, out var ty) ||
+                tx is < 1 or > 4096 || ty is < 1 or > 4096) continue;
+            var start = Ptr(reader, b + Poe2.Terrain.GridWalkableData);
+            var end = Ptr(reader, b + Poe2.Terrain.GridWalkableData + 8);
+            if (start == 0 || end <= start) continue;
+            var bytes = (long)(end - start);
+            if (bytes is < 0x400 or > 0x4000000) continue;
+            if (!reader.TryReadStruct<int>(b + Poe2.Terrain.BytesPerRow, out var bpr) ||
+                bpr is < 4 or > 8192) continue;
+            if (Math.Abs(bpr * 2L - tx * Poe2.Terrain.TileGridCells) <= 1 &&
+                bytes % bpr == 0 && bytes / bpr == ty * Poe2.Terrain.TileGridCells)
+                return true;
         }
         return false;
     }
