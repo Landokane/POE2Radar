@@ -29,11 +29,20 @@ internal static class RecoveryVerify
     public static int Run(ProcessHandle process, MemoryReader reader)
     {
         var slot = ResolveSlot(process, reader);
-        if (slot == 0) { Console.WriteLine("Could not resolve the GameState slot — run --recover first."); return 1; }
-
-        var live = new Poe2Live(reader, slot);
-        if (!live.TryResolve(out var igs, out var ai, out var lp))
-        { Console.WriteLine("Chain does not resolve — run --recover first."); return 1; }
+        nint igs = 0, ai = 0, lp = 0;
+        if (slot == 0 || !new Poe2Live(reader, slot).TryResolve(out igs, out ai, out lp))
+        {
+            Console.WriteLine("Committed chain unavailable; searching for a live character chain...");
+            if (!RecoveryChain.TryFind(process, reader, out igs, out ai, out lp,
+                out var aiOffset, out var lpOffset))
+            {
+                Console.WriteLine("Could not validate a live player chain. Enter a zone and run --recover --deep for diagnosis.");
+                return 1;
+            }
+            Console.WriteLine($"RECOVERED chain: InGameState.AreaInstanceData = 0x{aiOffset:X3}, " +
+                              $"AreaInstance.LocalPlayer = 0x{lpOffset:X3}");
+            Console.WriteLine("Recovered offsets are candidates only; no source files were modified.");
+        }
 
         Console.WriteLine("\n=== STAGE 3: field re-validation ===\n");
         Console.WriteLine($"InGameState 0x{igs:X}  AreaInstance 0x{ai:X}  LocalPlayer 0x{lp:X}\n");
@@ -102,6 +111,37 @@ internal static class RecoveryVerify
         Console.WriteLine("\n--- AreaHash (committed offset readback; must be stable in-zone, change on zone) ---");
         reader.TryReadStruct<uint>(ai + Poe2.AreaInstance.CurrentAreaHash, out var hash);
         Console.WriteLine($"  +0x{Poe2.AreaInstance.CurrentAreaHash:X3} = 0x{hash:X8}  (plausible: {(hash != 0 && hash != 0xFFFFFFFF ? "yes" : "NO")})");
+
+        // Stage 5: compare the old ServerData pointer with the +0x08 candidate.
+        // Do not promote a pointer merely because a neighbouring block shifted.
+        Console.WriteLine("\n--- ServerDataPtr candidates (read-only) ---");
+        foreach (var off in new[] { Poe2.AreaInstance.ServerDataPtr,
+                                     Poe2.AreaInstance.LocalPlayer - 0x20 })
+        {
+            var serverData = Ptr(reader, ai + off);
+            var relatedPlayer = Ptr(reader, ai + off + 0x20);
+            var matchesPlayer = relatedPlayer == lp;
+            var league = serverData == 0 ? string.Empty
+                : ReadStdWString(reader, serverData + Poe2.ServerData.League);
+            var readableLeague = league.Length is >= 2 and <= 80
+                && league.All(ch => ch >= ' ' && ch <= '~');
+            Console.WriteLine($"  +0x{off:X3}: ptr=0x{serverData:X}, " +
+                              $"player(+0x20) match={matchesPlayer}, " +
+                              $"league={(readableLeague ? league : "(unverified)")}");
+        }
+        Console.WriteLine("  ServerData remains UNVERIFIED until pointer shape and league are checked.");
+
+        // A genuine per-instance hash should not be a high half of a 64-bit
+        // pointer, nor assumed valid simply for being nonzero.
+        Console.WriteLine("\n--- Area hash investigation (raw DWORDs; no automatic selection) ---");
+        for (var off = 0x108; off <= 0x140; off += 4)
+        {
+            if (!reader.TryReadStruct<uint>(ai + off, out var value)) continue;
+            var pointerHalf = (off % 8 == 4 && value is >= 0x100 and <= 0x7FFF);
+            Console.WriteLine($"  +0x{off:X3}: 0x{value:X8}" +
+                              (pointerHalf ? "  [possible pointer upper-half]" : ""));
+        }
+        Console.WriteLine("  Compare these values across two instances of the SAME area; no hash validated yet.");
 
         // ── Entity StdMaps: {Head ptr, int Size}. A real map's head node reaches entities whose
         //    Details+Name resolves to a Metadata/ path, which no unrelated {ptr,int} pair will. ──

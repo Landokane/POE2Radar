@@ -230,6 +230,7 @@ public sealed class RadarApp : IDisposable
     private List<string> _selectedSnapshot = new();
     private IReadOnlyList<LegendEntry> _legend = Array.Empty<LegendEntry>();
     private bool _overlayHadContent;
+    private DateTime _nextOverlayToggleAt = DateTime.MinValue;
 
     // ── Phase 1: exploration fog + draw-only path guidance (all gated by RadarSettings flags). ──
     // Unified navigation targets: a single list built each world tick from BOTH terrain-tile
@@ -557,6 +558,7 @@ public sealed class RadarApp : IDisposable
         catch (Exception ex) { Console.Error.WriteLine($"API server disabled: {ex.Message}"); }
         Console.WriteLine("Hotkeys: F6=add nearest path target  F7=clear path targets  "
                           + "F8=auto-flask  F9=quit  F12=open dashboard");
+        Console.WriteLine($"         F11=toggle overlay visibility (currently {(_settings.OverlayVisible ? "ON" : "OFF")})");
         Console.WriteLine("         F10 (Atlas open) = inspect hovered tile (dumps map name + code + content"
                           + " to console for web-UI filters) and set route START->END (3rd press resets)");
         // Best-effort version check against GitHub (non-blocking; never fails startup).
@@ -1204,7 +1206,7 @@ public sealed class RadarApp : IDisposable
 
         var realActive = _gameHwnd != 0 && GetForegroundWindow() == _gameHwnd;
         // "Always show" draws the overlay even when PoE2 isn't focused (for dashboard calibration).
-        var drawActive = realActive || _settings.AlwaysShowOverlay;
+        var drawActive = _settings.OverlayVisible && (realActive || _settings.AlwaysShowOverlay);
         var atlasProj = AtlasProjection(); // resolution-correct (auto from window height) or manual calib
         var ctx = new RenderContext(
             InGame: inGame,
@@ -1744,6 +1746,15 @@ public sealed class RadarApp : IDisposable
             _settings.Save();
             Console.WriteLine($"\nAuto-flask: {(_autoFlask ? "ON" : "OFF")}");
         }
+        // F11 toggles local overlay visibility and persists the preference. Capture behavior is unchanged.
+        if (Down(0x7A) && DateTime.UtcNow >= _nextOverlayToggleAt) // F11
+        {
+            _settings.OverlayVisible = !_settings.OverlayVisible;
+            _settings.Save();
+            _nextOverlayToggleAt = DateTime.UtcNow.AddMilliseconds(350);
+            Console.WriteLine($"\nOverlay visibility: {(_settings.OverlayVisible ? "ON" : "OFF")}");
+        }
+
         // F9 quits the overlay (besides the tray-icon Exit).
         if (Down(0x78)) { Console.WriteLine("\nF9 — exiting."); RequestShutdown(); }
 
