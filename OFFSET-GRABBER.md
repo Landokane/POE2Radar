@@ -1,39 +1,57 @@
-# Separate offset-grabber CLI (experimental)
+# POE2Radar standalone offset grabber
 
-This tool lives on **feature/offset-grabber-cli**. It does not modify the working radar's offsets, the main branch, the game files, or any release.
+**Branch:** `feature/offset-grabber-cli` (experimental, separate from `main`)
 
-## One-command use on Windows
+This script can **pull the latest grabber source**, build the existing research executable, run live PoE2 memory probes, and produce both a full text report and structured JSON candidate summary.
 
-With Path of Exile 2 running in an area, open PowerShell:
+It **does not** push or automatically apply offset changes to the working radar. Genuine offset recovery after a patch requires comparing evidence across multiple zones and in-game values. Zero-ES readings, area hash, and entity-map identity are deliberately not guessed.
+
+## First-time setup (Windows PowerShell)
 
 ```powershell
 Set-Location 'C:\Users\lando\Downloads\POE2Radar-PatchRecovery'
 git fetch origin
 git switch --track origin/feature/offset-grabber-cli
-.\Invoke-Poe2OffsetGrabber.ps1
 ```
 
-The first two Git commands are one-time setup. Subsequent runs require only:
+If that branch already exists locally, use `git switch feature/offset-grabber-cli` instead.
+
+## Built-in self-test (no game required)
 
 ```powershell
-Set-Location 'C:\Users\lando\Downloads\POE2Radar-PatchRecovery'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\Invoke-Poe2OffsetGrabber.ps1' -SelfTest
+```
+
+Expected: `SELF-TEST PASS` with no game attachment. This checks sample chain, terrain and vitals extraction including the zero-ES false positive.
+
+## Scan the current game
+
+Start Path of Exile 2 and enter an area, then:
+
+```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\Invoke-Poe2OffsetGrabber.ps1'
 ```
 
-The script:
-1. Confirms it is on **feature/offset-grabber-cli**, with a clean tree, then runs `git pull --ff-only origin feature/offset-grabber-cli`.
-2. Builds only `POE2Radar.Research` (requires .NET 10).
-3. Detects the running PoE executable and records its SHA256.
-4. Runs `--recover --deep`, `--verify-fields` and `--vitals`.
-5. Saves full output under `%LOCALAPPDATA%\POE2Radar\OffsetGrabber`.
+Default PoE2 path:
+`C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\PathOfExileSteam.exe`
 
-Options: `-SkipPull` to avoid network Git fetch; `-SkipBuild` to use the already built research executable.
+Use `-GameExe 'C:\full\other\PathOfExileSteam.exe'` if installed elsewhere. If multiple matching processes exist, select the exact one with `-ProcessId 12345`. The script passes the selected PID to all three research probes.
 
-## Limitations and safety
+Optional: `-SkipPull` (offline), `-SkipBuild` (reuse a previously built research EXE).
 
-- A `git pull` fetches **source code**, not fresh game-memory offsets from GGG; live local probes are what discover possible offsets.
-- This is a candidate **report**, not an automatically applied update. The program cannot guarantee that every offset is discovered or that every match is correct.
-- False positives happen (e.g., the Energy Shield 0/0 case). Verify against in-game values and preferably two areas.
-- It stops rather than pull over uncommitted work, and never force-resets or overwrites your offset table.
-- Memory addresses change between game sessions; never hardcode a process address.
-- Memory-reading overlays can conflict with game policies. Use at your own risk.
+Output is written to `%LOCALAPPDATA%\POE2Radar\OffsetGrabber`:
+
+- `offset-grabber-YYYYMMDD-HHMMSS.txt`: full probe output, errors and candidate summary.
+- `offset-candidates-YYYYMMDD-HHMMSS.json`: machine-readable candidates with source and `CANDIDATE_ONLY` status, plus SHA256 of the game executable and probe exit codes.
+
+The pipeline executes `--recover --deep`, `--verify-fields`, and `--vitals` using the `POE2Radar.Research` executable.
+
+## Safety and limitations
+
+- `git pull --ff-only` never force-resets. Tracked work-in-progress blocks pulling; untracked release ZIPs do not.
+- Self-test validates parser logic from saved examples. It is **not** a Windows or live-game validation.
+- The script is independent of the Release radar and does not change `Poe2Offsets.cs`.
+- The game and memory-reader executable must run on Windows with sufficient permission to read game process memory.
+- No static scan can guarantee all offsets after an arbitrary patch; candidate matching may give false positives.
+- Never use a numeric candidate from a single pass as an automatic production change.
+- The script never writes to game memory. Ensure use complies with game rules and applicable terms.
