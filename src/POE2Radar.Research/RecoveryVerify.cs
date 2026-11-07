@@ -114,7 +114,7 @@ internal static class RecoveryVerify
 
         // Stage 5: compare the old ServerData pointer with the +0x08 candidate.
         // Do not promote a pointer merely because a neighbouring block shifted.
-        Console.WriteLine("\\n--- ServerDataPtr candidates (read-only) ---");
+        Console.WriteLine("\n--- ServerDataPtr candidates (read-only) ---");
         foreach (var off in new[] { Poe2.AreaInstance.ServerDataPtr,
                                      Poe2.AreaInstance.LocalPlayer - 0x20 })
         {
@@ -133,7 +133,7 @@ internal static class RecoveryVerify
 
         // A genuine per-instance hash should not be a high half of a 64-bit
         // pointer, nor assumed valid simply for being nonzero.
-        Console.WriteLine("\\n--- Area hash investigation (raw DWORDs; no automatic selection) ---");
+        Console.WriteLine("\n--- Area hash investigation (raw DWORDs; no automatic selection) ---");
         for (var off = 0x108; off <= 0x140; off += 4)
         {
             if (!reader.TryReadStruct<uint>(ai + off, out var value)) continue;
