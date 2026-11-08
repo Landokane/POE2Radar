@@ -207,7 +207,8 @@ public sealed class RadarApp : IDisposable
     private bool _autoHzLogged;                     // log the first successful detection (proves it read the monitor, not the fallback)
     private DateTime _nextHzCheckUtc = DateTime.MinValue;
 
-    private uint _areaHash;        // render thread: live area hash (RadarState + zone-load draw gate)
+    private uint _areaHash;        // render thread: display area hash (not a validated instance identity)
+    private Poe2Live.InstanceIdentity _renderInstanceKey; // render reader's per-instance caches
     private nint _gameHwnd;
     private volatile bool _shutdown;
 
@@ -1114,6 +1115,11 @@ public sealed class RadarApp : IDisposable
             _inGameStateForApi = inGameState;   // for /api/atlas + F10 route pick
             _areaHash = _liveRender.AreaHash(areaInstance);
             liveInstanceKey = _liveRender.InstanceKey(areaInstance, localPlayer);
+            if (liveInstanceKey != _renderInstanceKey)
+            {
+                _renderInstanceKey = liveInstanceKey;
+                _liveRender.InvalidateInstanceCaches();
+            }
 
             player = _liveRender.PlayerGrid(localPlayer) ?? NumVec2.Zero;
             playerWorld = _liveRender.PlayerWorld(localPlayer);   // same Render read PlayerGrid uses; live each frame
@@ -1194,7 +1200,7 @@ public sealed class RadarApp : IDisposable
                 }
             }
         }
-        else { if (_hpFrame.Count > 0) _hpFrame.Clear(); if (_itemFrame.Count > 0) _itemFrame.Clear(); if (_lootTagFrame.Count > 0) _lootTagFrame.Clear(); if (_atlasMarkFrame.Count > 0) _atlasMarkFrame.Clear(); _hoverFrame = null; }
+        else { if (_renderInstanceKey != default) { _renderInstanceKey = default; _liveRender.InvalidateInstanceCaches(); } if (_hpFrame.Count > 0) _hpFrame.Clear(); if (_itemFrame.Count > 0) _itemFrame.Clear(); if (_lootTagFrame.Count > 0) _lootTagFrame.Clear(); if (_atlasMarkFrame.Count > 0) _atlasMarkFrame.Clear(); _hoverFrame = null; }
 
         // Zone-load guard: the world snapshot lags the live chain by up to one world pass, so right after a
         // zone change its entities/terrain/route still belong to the PREVIOUS area. Only draw them once the
