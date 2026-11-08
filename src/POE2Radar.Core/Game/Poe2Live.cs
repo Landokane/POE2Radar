@@ -100,6 +100,41 @@ public sealed class Poe2Live
 
     public sealed record TerrainData(byte[] Walkable, int Width, int Height);
 
+    // Area hash is currently unverified. An instance can even reuse an AreaInstance address
+    // after a reset. Compare multiple independently allocated live objects instead.
+    public readonly record struct InstanceIdentity(
+        nint AreaInstance, nint LocalPlayer, nint WalkableBuffer, nint TileDetailsBuffer);
+
+    public InstanceIdentity InstanceKey(nint areaInstance, nint localPlayer)
+    {
+        var terrain = areaInstance + Poe2.AreaInstance.TerrainMetadata;
+        return new InstanceIdentity(areaInstance, localPlayer,
+            Ptr(terrain + Poe2.Terrain.GridWalkableData),
+            Ptr(terrain + Poe2.Terrain.TileDetailsPtr));
+    }
+
+    /// <summary>Invalidate caches after a loading gap or detected instance identity change.
+    /// Caller must use this on this Poe2Live's owning thread, not concurrently.</summary>
+    public void InvalidateInstanceCaches()
+    {
+        _entCacheKey = 0;
+        _renderAddr.Clear(); _lifeAddr.Clear(); _posAddr.Clear(); _ompAddr.Clear(); _chestAddr.Clear();
+        _category.Clear(); _meta.Clear(); _iconAddr.Clear(); _rarity.Clear(); _mods.Clear();
+        _itemIdent.Clear(); _idAt.Clear();
+        _areaCodeFor = _areaNameFor = _leagueFor = -1;
+        _areaCode = _areaName = _league = "";
+        _landmarksKey = _tilePathsKey = -1;
+        _landmarks = null; _tilePaths = null;
+        _mapCacheKey = -1;
+        _mapEls.Clear(); _everHidden.Clear(); _everVisible.Clear();
+        _plLifeFor = _plLife = 0;
+        _vitalOffsetsResolved = false;
+        _healthOff = Poe2.Life.Health;
+        _manaOff = Poe2.Life.Mana;
+        _esOff = Poe2.Life.EnergyShield;
+        _esOffKnown = true;
+    }
+
     /// <summary>Resolve the in-game chain. Returns false during loading / character select.</summary>
     public bool TryResolve(out nint inGameState, out nint areaInstance, out nint localPlayer)
     {
