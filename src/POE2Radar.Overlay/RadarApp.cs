@@ -264,15 +264,10 @@ public sealed class RadarApp : IDisposable
     private bool _selectionCapWarned;                                    // log the "cap reached" notice once
     private nint _navTargetsArea = -1;
     private Poe2Live.InstanceIdentity _navInstanceKey;                                   // AreaInstance the auto-nav was applied for
-    // Per-instance nav memory: the nav selection for each AreaInstance hash, so returning to a zone
-    // (e.g. after a town trip, which re-resolves a fresh AreaInstance) RESTORES what was selected
-    // instead of clearing it. AreaHash is the stable per-instance id (same instance → same hash;
-    // a re-rolled map → new hash → fresh auto-nav). In-session only and capped (LRU) so a long
-    // session can't grow it unbounded. _selectionAreaHash is the hash _selectedIds belong to now.
-    private readonly Dictionary<uint, List<string>> _zoneSelections = new();
-    private readonly List<uint> _zoneOrder = new();                      // insertion order, for LRU eviction
-    private uint _selectionAreaHash;
-    private const int MaxRememberedZones = 64;
+    // Monotonically increasing per-instance route generation. Background A* responses carry
+    // this generation in their TargetId so completed jobs from an older zone cannot be
+    // accepted by a new tracker with the same objective id.
+    private long _routeGeneration;
 
     // ── Collapsible "POE2Radar" navigation menu widget state (drawn always-on; persisted corner). ──
     private bool _navMenuExpanded;                                       // dropdown open? (default collapsed)
@@ -1970,51 +1965,29 @@ public sealed class RadarApp : IDisposable
         return targets;
     }
 
-    /// <summary>Zone change: remember the leaving zone's selection (by its instance hash), then either
-    /// RESTORE the selection we previously had for the zone we're entering (so a town round-trip keeps
-    /// your pathing) or — on a first visit — seed it from the persistent auto-nav patterns. Trackers are
-    /// NOT touched here — the per-tick reconciliation (ReconcileTrackers) syncs them to _selectedIds.</summary>
+    /// <summary>On a confirmed instance transition, discard old route trackers and
+    /// selections. The area hash is unverified and must never be used to restore a
+    /// previous instance's objective. Auto-path rules may select targets found in
+    /// this instance, but old manually selected device routes are not resurrected.</summary>
     private void OnAreaChanged(uint areaHash)
     {
-        int count; bool restored;
+        _routeGeneration++;
+        _trackers.Clear();
+        _selectedPaths = new List<SelectedPath>();
+        int count;
         lock (_navLock)
         {
-            // Save what was selected in the zone we're leaving, keyed by ITS instance hash.
-            if (_selectionAreaHash != 0) RememberZoneSelection(_selectionAreaHash, _selectedIds);
-
             _selectedIds.Clear();
             _selectionCapWarned = false;
-            _selectionAreaHash = areaHash;
-
-            // Returning to a remembered instance → restore its selection verbatim (the user's explicit
-            // choices win, including an intentionally-empty one, so a zone they cleared stays cleared).
-            List<string>? remembered = null;
-            restored = areaHash != 0 && _zoneSelections.TryGetValue(areaHash, out remembered);
-            if (restored)
+            foreach (var t in _navTargets)
             {
-                foreach (var id in remembered!)
-                {
-                    if (_selectedIds.Count >= MaxSelectedTargets) break;
-                    if (!_selectedIds.Contains(id)) _selectedIds.Add(id);
-                }
-            }
-            else
-            {
-                // First visit to this instance: auto-select every target whose display rule opted into
-                // auto-pathing (the per-rule "Auto-path" flag), capped so colors/planning stay bounded.
-                foreach (var t in _navTargets)
-                {
-                    if (_selectedIds.Count >= MaxSelectedTargets) break;
-                    if (t.AutoPath && !_selectedIds.Contains(t.Id))
-                        _selectedIds.Add(t.Id);
-                }
+                if (_selectedIds.Count >= MaxSelectedTargets) break;
+                if (t.AutoPath && !_selectedIds.Contains(t.Id))
+                    _selectedIds.Add(t.Id);
             }
             count = _selectedIds.Count;
         }
-        _selectedPaths = new List<SelectedPath>();
-
-        if (count > 0)
-            Console.WriteLine($"\nNav: {(restored ? "restored" : "auto-selected")} {count} target(s) on zone change.");
+        Console.WriteLine($"Nav: instance change, discarded prior paths; {count} auto-path target(s) in current instance.");
     }
 
     /// <summary>
@@ -2040,22 +2013,6 @@ public sealed class RadarApp : IDisposable
                 return false; // absent (out of range) → keep; it may return
             });
         }
-    }
-
-    /// <summary>Store a copy of <paramref name="ids"/> under <paramref name="hash"/>, evicting the
-    /// oldest remembered zone when the table is full. Call under <see cref="_navLock"/>.</summary>
-    private void RememberZoneSelection(uint hash, List<string> ids)
-    {
-        if (!_zoneSelections.ContainsKey(hash))
-        {
-            if (_zoneOrder.Count >= MaxRememberedZones)
-            {
-                _zoneSelections.Remove(_zoneOrder[0]);
-                _zoneOrder.RemoveAt(0);
-            }
-            _zoneOrder.Add(hash);
-        }
-        _zoneSelections[hash] = new List<string>(ids);
     }
 
     /// <summary>Surfacing matcher fed to Poe2Live: a terrain tile surfaces as a landmark when a user
@@ -2247,7 +2204,12 @@ public sealed class RadarApp : IDisposable
         {
             foreach (var r in results)
             {
-                if (!_trackers.TryGetValue(r.TargetId, out var tracker)) continue; // deselected → ignore
+                // Requests from previous instances can finish later and reuse a target id.
+                // Only apply a completion tagged with this instance's route generation.
+                var prefix = _routeGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":";
+                if (!r.TargetId.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                var id = r.TargetId[prefix.Length..];
+                if (!_trackers.TryGetValue(id, out var tracker)) continue; // deselected → ignore
                 tracker.ApplyResult(r.Waypoints, new NumVec2(r.Goal.x, r.Goal.y));
             }
         }
@@ -2274,8 +2236,11 @@ public sealed class RadarApp : IDisposable
         if (_terrain is not { } terrain) return; // can't plan without terrain yet
         var player = _worldPlayer;   // the world tick's current player (this all runs on the world thread)
         tracker.MarkReplanRequested(player);
+        // Use an internal instance-scoped job id so a late completion from the
+        // previous map can never overwrite the current map's route tracker.
+        var scopedId = _routeGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + id;
         _replanner.Enqueue(new BackgroundReplanner.Request(
-            id, terrain, ((int)player.X, (int)player.Y), ((int)goal.X, (int)goal.Y)));
+            scopedId, terrain, ((int)player.X, (int)player.Y), ((int)goal.X, (int)goal.Y)));
     }
 
     /// <summary>Rebuild <see cref="_selectedPaths"/> from the trackers' CurrentPoints, each colored by
