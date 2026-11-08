@@ -178,12 +178,13 @@ public sealed class RadarApp : IDisposable
     private IReadOnlyList<Poe2Live.Landmark> _landmarks = Array.Empty<Poe2Live.Landmark>(); // world only
     private Poe2Live.TerrainData? _terrain;                 // world only
     private int _charLevel;                                 // world only (published in the snapshot)
-    private nint _lastAreaInstance;                         // world only: terrain-cache invalidation + atlas anchor
+    private nint _lastAreaInstance;                         // world only: atlas anchor
+    private Poe2Live.InstanceIdentity _lastInstanceKey;   // world-only cache identity (area address alone can be reused)
 
     // ── Published lock-free snapshot: the world tick swaps this whole immutable record; the render thread
     //    reads it once per frame. Same idiom as _state / _atlasRender. ──
     private sealed record WorldSnapshot(
-        bool InGame, uint AreaHash, int AreaLevel, string AreaCode, int CharLevel,
+        bool InGame, Poe2Live.InstanceIdentity InstanceKey, uint AreaHash, int AreaLevel, string AreaCode, int CharLevel,
         IReadOnlyList<Poe2Live.EntityDot> Entities,
         IReadOnlyList<Poe2Live.Landmark> Landmarks,
         Poe2Live.TerrainData? Terrain,
@@ -194,7 +195,7 @@ public sealed class RadarApp : IDisposable
         IReadOnlyList<string> SelectedSnapshot)
     {
         public static readonly WorldSnapshot Empty = new(
-            false, 0, 0, "", 0, Array.Empty<Poe2Live.EntityDot>(), Array.Empty<Poe2Live.Landmark>(), null,
+            false, default, 0, 0, "", 0, Array.Empty<Poe2Live.EntityDot>(), Array.Empty<Poe2Live.Landmark>(), null,
             Array.Empty<HpBarSpec>(), Array.Empty<ItemLabelSpec>(), Array.Empty<SelectedPath>(),
             Array.Empty<LegendEntry>(), Array.Empty<string>());
     }
@@ -259,7 +260,8 @@ public sealed class RadarApp : IDisposable
     private readonly List<string> _selectedIds = new();                  // selected target ids (order drives the color slot)
     private List<SelectedPath> _selectedPaths = new();                   // one route per selected target (from trackers)
     private bool _selectionCapWarned;                                    // log the "cap reached" notice once
-    private nint _navTargetsArea = -1;                                   // AreaInstance the auto-nav was applied for
+    private nint _navTargetsArea = -1;
+    private Poe2Live.InstanceIdentity _navInstanceKey;                                   // AreaInstance the auto-nav was applied for
     // Per-instance nav memory: the nav selection for each AreaInstance hash, so returning to a zone
     // (e.g. after a town trip, which re-resolves a fresh AreaInstance) RESTORES what was selected
     // instead of clearing it. AreaHash is the stable per-instance id (same instance → same hash;
@@ -691,6 +693,16 @@ public sealed class RadarApp : IDisposable
     /// stale entities/route (the selection itself is left intact so a loading screen keeps it).</summary>
     private void PublishEmptyWorld()
     {
+        // Loading screens can be shorter than an allocation lifetime. Force reconstruction
+        // even if the next instance reuses the exact same pointer values.
+        if (_lastInstanceKey != default)
+        {
+            _terrain = null;
+            _lastAreaInstance = 0;
+            _lastInstanceKey = default;
+            _navInstanceKey = default;
+            _live.InvalidateInstanceCaches();
+        }
         if (!ReferenceEquals(_world, WorldSnapshot.Empty)) _world = WorldSnapshot.Empty;
         if (!ReferenceEquals(_atlasRender, AtlasRender.Closed))
         {
@@ -1080,6 +1092,7 @@ public sealed class RadarApp : IDisposable
         var player = NumVec2.Zero;
         POE2Radar.Core.Game.Vector3? playerWorld = null;   // live player feet (incl. Z) for the world-ground route anchor
         var map = default(Poe2Live.MapUi);
+        var liveInstanceKey = default(Poe2Live.InstanceIdentity);
         // Atlas routes/markers re-read per frame (positions from node elements) so they track pan at full FPS.
         NumVec2? atlasStart = null, atlasEnd = null, atlasCurrent = null;
         List<NumVec2>? atlasRoute = null;
@@ -1100,6 +1113,7 @@ public sealed class RadarApp : IDisposable
             _areaInstanceForApi = areaInstance; // for /api/tiles (read by _liveApi on the HTTP thread)
             _inGameStateForApi = inGameState;   // for /api/atlas + F10 route pick
             _areaHash = _liveRender.AreaHash(areaInstance);
+            liveInstanceKey = _liveRender.InstanceKey(areaInstance, localPlayer);
 
             player = _liveRender.PlayerGrid(localPlayer) ?? NumVec2.Zero;
             playerWorld = _liveRender.PlayerWorld(localPlayer);   // same Render read PlayerGrid uses; live each frame
@@ -1186,7 +1200,7 @@ public sealed class RadarApp : IDisposable
         // zone change its entities/terrain/route still belong to the PREVIOUS area. Only draw them once the
         // snapshot's area hash matches the live one; otherwise draw none this frame (player blip + map still
         // draw). The API still serves the latest snapshot regardless (no visual artifact there).
-        var worldFresh = inGame && snap.InGame && snap.AreaHash == _areaHash;
+        var worldFresh = inGame && snap.InGame && snap.InstanceKey == liveInstanceKey;
         var entities = worldFresh ? snap.Entities : Array.Empty<Poe2Live.EntityDot>();
         var landmarks = worldFresh ? snap.Landmarks : Array.Empty<Poe2Live.Landmark>();
         var terrain = worldFresh ? snap.Terrain : null;
@@ -1324,8 +1338,16 @@ public sealed class RadarApp : IDisposable
     /// </summary>
     private void WorldTick(nint inGameState, nint areaInstance, nint localPlayer)
     {
-        // AreaInstance is a fresh object per area — use its address to invalidate per-area caches.
-        if (areaInstance != _lastAreaInstance) { _terrain = null; _lastAreaInstance = areaInstance; }
+        // The game can recycle the AreaInstance address after a reset. Terrain and tile
+        // allocations provide independent signals; never key terrain solely by area hash.
+        var instanceKey = _live.InstanceKey(areaInstance, localPlayer);
+        if (instanceKey != _lastInstanceKey)
+        {
+            _terrain = null;
+            _lastAreaInstance = areaInstance;
+            _lastInstanceKey = instanceKey;
+            _live.InvalidateInstanceCaches();
+        }
         var areaHash = _live.AreaHash(areaInstance);
         var areaLevel = _live.AreaLevel(areaInstance);
         var areaCode = _live.AreaCode(areaInstance);
@@ -1434,8 +1456,9 @@ public sealed class RadarApp : IDisposable
         // On a zone change: drop the (now-stale) selection, then apply the persistent
         // auto-nav patterns against the new zone's targets. Keyed off the AreaInstance
         // address (a fresh object per area), same signal the per-area caches use.
-        if (areaInstance != _navTargetsArea)
+        if (instanceKey != _navInstanceKey)
         {
+            _navInstanceKey = instanceKey;
             _navTargetsArea = areaInstance;
             OnAreaChanged(areaHash);
         }
@@ -1456,7 +1479,7 @@ public sealed class RadarApp : IDisposable
         _legend = BuildLegend(_selectedSnapshot);
 
         // Publish the whole immutable world snapshot atomically for the render thread.
-        _world = new WorldSnapshot(true, areaHash, areaLevel, areaCode, _charLevel,
+        _world = new WorldSnapshot(true, instanceKey, areaHash, areaLevel, areaCode, _charLevel,
             _entities, _landmarks, _terrain, hpSpecs, itemLabels, _selectedPaths, _legend, _selectedSnapshot);
     }
 
