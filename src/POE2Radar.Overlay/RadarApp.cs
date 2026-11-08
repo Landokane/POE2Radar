@@ -177,6 +177,7 @@ public sealed class RadarApp : IDisposable
     private readonly List<ItemLabel> _itemFrame = new();   // render-thread scratch (rebuilt per frame)
     private IReadOnlyList<Poe2Live.Landmark> _landmarks = Array.Empty<Poe2Live.Landmark>(); // world only
     private Poe2Live.TerrainData? _terrain;                 // world only
+    private DateTime _nextTerrainRecheckUtc = DateTime.MinValue; // handle recycled game allocations
     private int _charLevel;                                 // world only (published in the snapshot)
     private nint _lastAreaInstance;                         // world only: atlas anchor
     private Poe2Live.InstanceIdentity _lastInstanceKey;   // world-only cache identity (area address alone can be reused)
@@ -699,6 +700,7 @@ public sealed class RadarApp : IDisposable
         if (_lastInstanceKey != default)
         {
             _terrain = null;
+            _nextTerrainRecheckUtc = DateTime.MinValue;
             _lastAreaInstance = 0;
             _lastInstanceKey = default;
             _navInstanceKey = default;
@@ -1350,6 +1352,7 @@ public sealed class RadarApp : IDisposable
         if (instanceKey != _lastInstanceKey)
         {
             _terrain = null;
+            _nextTerrainRecheckUtc = DateTime.MinValue;
             _lastAreaInstance = areaInstance;
             _lastInstanceKey = instanceKey;
             _live.InvalidateInstanceCaches();
@@ -1366,7 +1369,28 @@ public sealed class RadarApp : IDisposable
         // heal benefited monster bars; with split readers, _live must heal independently. Result discarded.
         _ = _live.PlayerVitals(localPlayer);
         _charLevel = _live.PlayerLevel(localPlayer);   // changes ~never; 30 Hz is plenty
-        _terrain ??= _live.Terrain(areaInstance);
+        // An instance reset can recycle the same game allocation addresses. Do not hold
+        // the old terrain forever just because those addresses (or the unverified area
+        // hash) still match. Sample live grid contents periodically and only publish a
+        // replacement when its dimensions or pixels actually differ.
+        if (_terrain is null || DateTime.UtcNow >= _nextTerrainRecheckUtc)
+        {
+            _nextTerrainRecheckUtc = DateTime.UtcNow.AddSeconds(2);
+            var refreshed = _live.Terrain(areaInstance);
+            if (refreshed is not null &&
+                (_terrain is null || _terrain.Width != refreshed.Width ||
+                 _terrain.Height != refreshed.Height ||
+                 !_terrain.Walkable.AsSpan().SequenceEqual(refreshed.Walkable)))
+            {
+                if (_terrain is not null)
+                {
+                    Console.WriteLine("Poe2Radar: terrain content changed in-place; refreshing map and landmarks.");
+                    _live.InvalidateInstanceCaches();
+                    _navInstanceKey = default;
+                }
+                _terrain = refreshed;
+            }
+        }
         _entities = _live.Entities(areaInstance);
         // Drop the local player's own entity — it lives in the AwakeEntities map like any
         // other Player, but the dedicated center blip already represents "you" (gated by
