@@ -8,9 +8,9 @@ namespace POE2Radar.Overlay;
 
 /// <summary>
 /// Direct2D bitmap of the walkable terrain mask, built once per area. One pixel per grid
-/// cell — alpha = walkability. Cache key is (width, height, areaHash) — two maps can
-/// share dimensions, so dimension-only keying would silently keep the previous map's
-/// terrain after a transition.
+/// cell — alpha = walkability. Cache is keyed by the immutable terrain snapshot's
+/// byte-array identity, plus dimensions/style. The in-game area hash is not a reliable
+/// instance discriminator, and same-sized new instances must replace the old bitmap.
 /// </summary>
 public sealed class TerrainBitmap : IDisposable
 {
@@ -23,6 +23,7 @@ public sealed class TerrainBitmap : IDisposable
     private int _builtForWidth;
     private int _builtForHeight;
     private uint _builtForAreaHash;
+    private byte[]? _builtFromWalkable;
     private TerrainStyle _builtForStyle;
 
     public TerrainBitmap(ID2D1RenderTarget renderTarget)
@@ -36,19 +37,23 @@ public sealed class TerrainBitmap : IDisposable
     public uint AreaHash => _builtForAreaHash;
 
     /// <summary>
-    /// Build (or rebuild) from a flat 0/1 walkable array. Cheap when dimensions +
-    /// <paramref name="areaHash"/> match the cached bitmap. <paramref name="inTransition"/> forces
-    /// an immediate drop (the area's hash may briefly persist while a zone is loading).
+    /// Build (or rebuild) from a flat immutable 0/1 walkable snapshot.
+    /// Never use the unverified area hash to decide if the pixels have changed.
+    /// <paramref name="inTransition"/> forces an immediate drop.
     /// </summary>
     public void EnsureBuiltRaw(byte[] walkable, int width, int height, uint areaHash, bool inTransition, TerrainStyle style)
     {
-        if (_bitmap is not null && (inTransition || areaHash != _builtForAreaHash || !style.Equals(_builtForStyle)))
+        if (_bitmap is not null && (inTransition ||
+            !ReferenceEquals(walkable, _builtFromWalkable) ||
+            width != _builtForWidth || height != _builtForHeight ||
+            !style.Equals(_builtForStyle)))
         {
-            _bitmap.Dispose(); _bitmap = null; _builtForAreaHash = 0;
+            _bitmap.Dispose(); _bitmap = null;
+            _builtFromWalkable = null;
         }
         if (inTransition || width <= 0 || height <= 0) return;
         if (_bitmap is not null && width == _builtForWidth && height == _builtForHeight
-            && areaHash == _builtForAreaHash && style.Equals(_builtForStyle)) return;
+            && ReferenceEquals(walkable, _builtFromWalkable) && style.Equals(_builtForStyle)) return;
         BuildFrom(walkable, width, height, areaHash, style);
     }
 
@@ -125,7 +130,8 @@ public sealed class TerrainBitmap : IDisposable
         }
         _builtForWidth     = w;
         _builtForHeight    = h;
-        _builtForAreaHash  = areaHash;
+        _builtForAreaHash  = areaHash; // display metadata only; not a cache key
+        _builtFromWalkable = walkable;
         _builtForStyle     = style;
     }
 
@@ -133,5 +139,6 @@ public sealed class TerrainBitmap : IDisposable
     {
         _bitmap?.Dispose();
         _bitmap = null;
+        _builtFromWalkable = null;
     }
 }
