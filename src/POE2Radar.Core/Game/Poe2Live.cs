@@ -124,6 +124,7 @@ public sealed class Poe2Live
         _areaCodeFor = _areaNameFor = _leagueFor = -1;
         _areaCode = _areaName = _league = "";
         _landmarksKey = _tilePathsKey = -1;
+        _tilePathsTerrainBuffer = 0;
         _landmarks = null; _tilePaths = null;
         _mapCacheKey = -1;
         _mapEls.Clear(); _everHidden.Clear(); _everVisible.Clear();
@@ -763,6 +764,7 @@ public sealed class Poe2Live
 
     private List<string>? _tilePaths;
     private nint _tilePathsKey = -1;
+    private nint _tilePathsTerrainBuffer;
 
     /// <summary>
     /// All DISTINCT terrain-tile paths in the area (sorted), scanned once per area and cached. This is
@@ -771,8 +773,11 @@ public sealed class Poe2Live
     /// </summary>
     public IReadOnlyList<string> TilePaths(nint areaInstance)
     {
-        if (areaInstance == _tilePathsKey && _tilePaths is not null) return _tilePaths;
+        var tileBuffer = Ptr(areaInstance + Poe2.AreaInstance.TerrainMetadata + Poe2.Terrain.TileDetailsPtr);
+        if (areaInstance == _tilePathsKey && tileBuffer == _tilePathsTerrainBuffer && _tilePaths is not null)
+            return _tilePaths;
         _tilePathsKey = areaInstance;
+        _tilePathsTerrainBuffer = tileBuffer;
         _tilePaths = ScanTilePaths(areaInstance);
         return _tilePaths;
     }
