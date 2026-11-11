@@ -273,6 +273,10 @@ public sealed class RadarApp : IDisposable
     // ── Collapsible "POE2Radar" navigation menu widget state (drawn always-on; persisted corner). ──
     private bool _navMenuExpanded;                                       // dropdown open? (default collapsed)
 
+    // Requested from the in-game restart hotkey; Program relaunches only after Dispose().
+    public bool RestartRequested { get; private set; }
+    private bool _restartKeyWasDown;
+
     public void RequestShutdown() => _shutdown = true;
 
     public RadarApp(ProcessHandle process, MemoryReader reader, nint gameStateSlot)
@@ -1754,6 +1758,19 @@ public sealed class RadarApp : IDisposable
             _nextOverlayToggleAt = DateTime.UtcNow.AddMilliseconds(350);
             Console.WriteLine($"\nOverlay visibility: {(_settings.OverlayVisible ? "ON" : "OFF")}");
         }
+
+        // F5 performs a full clean restart, only when PoE2 has keyboard focus.
+        // Edge triggered: holding the key cannot start duplicate instances.
+        bool restartKeyDown = Down(0x74); // VK_F5
+        if (restartKeyDown && !_restartKeyWasDown &&
+            _gameHwnd != 0 && GetForegroundWindow() == _gameHwnd)
+        {
+            Console.WriteLine("\nF5 — clean radar restart requested.");
+            RestartRequested = true;
+            RequestShutdown();
+            return;
+        }
+        _restartKeyWasDown = restartKeyDown;
 
         // F9 quits the overlay (besides the tray-icon Exit).
         if (Down(0x78)) { Console.WriteLine("\nF9 — exiting."); RequestShutdown(); }
