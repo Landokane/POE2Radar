@@ -177,13 +177,15 @@ public sealed class RadarApp : IDisposable
     private readonly List<ItemLabel> _itemFrame = new();   // render-thread scratch (rebuilt per frame)
     private IReadOnlyList<Poe2Live.Landmark> _landmarks = Array.Empty<Poe2Live.Landmark>(); // world only
     private Poe2Live.TerrainData? _terrain;                 // world only
+    private DateTime _nextTerrainRecheckUtc = DateTime.MinValue; // handle recycled game allocations
     private int _charLevel;                                 // world only (published in the snapshot)
-    private nint _lastAreaInstance;                         // world only: terrain-cache invalidation + atlas anchor
+    private nint _lastAreaInstance;                         // world only: atlas anchor
+    private Poe2Live.InstanceIdentity _lastInstanceKey;   // world-only cache identity (area address alone can be reused)
 
     // ── Published lock-free snapshot: the world tick swaps this whole immutable record; the render thread
     //    reads it once per frame. Same idiom as _state / _atlasRender. ──
     private sealed record WorldSnapshot(
-        bool InGame, uint AreaHash, int AreaLevel, string AreaCode, int CharLevel,
+        bool InGame, Poe2Live.InstanceIdentity InstanceKey, uint AreaHash, int AreaLevel, string AreaCode, int CharLevel,
         IReadOnlyList<Poe2Live.EntityDot> Entities,
         IReadOnlyList<Poe2Live.Landmark> Landmarks,
         Poe2Live.TerrainData? Terrain,
@@ -194,7 +196,7 @@ public sealed class RadarApp : IDisposable
         IReadOnlyList<string> SelectedSnapshot)
     {
         public static readonly WorldSnapshot Empty = new(
-            false, 0, 0, "", 0, Array.Empty<Poe2Live.EntityDot>(), Array.Empty<Poe2Live.Landmark>(), null,
+            false, default, 0, 0, "", 0, Array.Empty<Poe2Live.EntityDot>(), Array.Empty<Poe2Live.Landmark>(), null,
             Array.Empty<HpBarSpec>(), Array.Empty<ItemLabelSpec>(), Array.Empty<SelectedPath>(),
             Array.Empty<LegendEntry>(), Array.Empty<string>());
     }
@@ -206,7 +208,8 @@ public sealed class RadarApp : IDisposable
     private bool _autoHzLogged;                     // log the first successful detection (proves it read the monitor, not the fallback)
     private DateTime _nextHzCheckUtc = DateTime.MinValue;
 
-    private uint _areaHash;        // render thread: live area hash (RadarState + zone-load draw gate)
+    private uint _areaHash;        // render thread: display area hash (not a validated instance identity)
+    private Poe2Live.InstanceIdentity _renderInstanceKey; // render reader's per-instance caches
     private nint _gameHwnd;
     private volatile bool _shutdown;
 
@@ -259,16 +262,12 @@ public sealed class RadarApp : IDisposable
     private readonly List<string> _selectedIds = new();                  // selected target ids (order drives the color slot)
     private List<SelectedPath> _selectedPaths = new();                   // one route per selected target (from trackers)
     private bool _selectionCapWarned;                                    // log the "cap reached" notice once
-    private nint _navTargetsArea = -1;                                   // AreaInstance the auto-nav was applied for
-    // Per-instance nav memory: the nav selection for each AreaInstance hash, so returning to a zone
-    // (e.g. after a town trip, which re-resolves a fresh AreaInstance) RESTORES what was selected
-    // instead of clearing it. AreaHash is the stable per-instance id (same instance → same hash;
-    // a re-rolled map → new hash → fresh auto-nav). In-session only and capped (LRU) so a long
-    // session can't grow it unbounded. _selectionAreaHash is the hash _selectedIds belong to now.
-    private readonly Dictionary<uint, List<string>> _zoneSelections = new();
-    private readonly List<uint> _zoneOrder = new();                      // insertion order, for LRU eviction
-    private uint _selectionAreaHash;
-    private const int MaxRememberedZones = 64;
+    private nint _navTargetsArea = -1;
+    private Poe2Live.InstanceIdentity _navInstanceKey;                                   // AreaInstance the auto-nav was applied for
+    // Monotonically increasing per-instance route generation. Background A* responses carry
+    // this generation in their TargetId so completed jobs from an older zone cannot be
+    // accepted by a new tracker with the same objective id.
+    private long _routeGeneration;
 
     // ── Collapsible "POE2Radar" navigation menu widget state (drawn always-on; persisted corner). ──
     private bool _navMenuExpanded;                                       // dropdown open? (default collapsed)
@@ -691,6 +690,17 @@ public sealed class RadarApp : IDisposable
     /// stale entities/route (the selection itself is left intact so a loading screen keeps it).</summary>
     private void PublishEmptyWorld()
     {
+        // Loading screens can be shorter than an allocation lifetime. Force reconstruction
+        // even if the next instance reuses the exact same pointer values.
+        if (_lastInstanceKey != default)
+        {
+            _terrain = null;
+            _nextTerrainRecheckUtc = DateTime.MinValue;
+            _lastAreaInstance = 0;
+            _lastInstanceKey = default;
+            _navInstanceKey = default;
+            _live.InvalidateInstanceCaches();
+        }
         if (!ReferenceEquals(_world, WorldSnapshot.Empty)) _world = WorldSnapshot.Empty;
         if (!ReferenceEquals(_atlasRender, AtlasRender.Closed))
         {
@@ -1080,6 +1090,7 @@ public sealed class RadarApp : IDisposable
         var player = NumVec2.Zero;
         POE2Radar.Core.Game.Vector3? playerWorld = null;   // live player feet (incl. Z) for the world-ground route anchor
         var map = default(Poe2Live.MapUi);
+        var liveInstanceKey = default(Poe2Live.InstanceIdentity);
         // Atlas routes/markers re-read per frame (positions from node elements) so they track pan at full FPS.
         NumVec2? atlasStart = null, atlasEnd = null, atlasCurrent = null;
         List<NumVec2>? atlasRoute = null;
@@ -1100,6 +1111,12 @@ public sealed class RadarApp : IDisposable
             _areaInstanceForApi = areaInstance; // for /api/tiles (read by _liveApi on the HTTP thread)
             _inGameStateForApi = inGameState;   // for /api/atlas + F10 route pick
             _areaHash = _liveRender.AreaHash(areaInstance);
+            liveInstanceKey = _liveRender.InstanceKey(areaInstance, localPlayer);
+            if (liveInstanceKey != _renderInstanceKey)
+            {
+                _renderInstanceKey = liveInstanceKey;
+                _liveRender.InvalidateInstanceCaches();
+            }
 
             player = _liveRender.PlayerGrid(localPlayer) ?? NumVec2.Zero;
             playerWorld = _liveRender.PlayerWorld(localPlayer);   // same Render read PlayerGrid uses; live each frame
@@ -1180,13 +1197,13 @@ public sealed class RadarApp : IDisposable
                 }
             }
         }
-        else { if (_hpFrame.Count > 0) _hpFrame.Clear(); if (_itemFrame.Count > 0) _itemFrame.Clear(); if (_lootTagFrame.Count > 0) _lootTagFrame.Clear(); if (_atlasMarkFrame.Count > 0) _atlasMarkFrame.Clear(); _hoverFrame = null; }
+        else { if (_renderInstanceKey != default) { _renderInstanceKey = default; _liveRender.InvalidateInstanceCaches(); } if (_hpFrame.Count > 0) _hpFrame.Clear(); if (_itemFrame.Count > 0) _itemFrame.Clear(); if (_lootTagFrame.Count > 0) _lootTagFrame.Clear(); if (_atlasMarkFrame.Count > 0) _atlasMarkFrame.Clear(); _hoverFrame = null; }
 
         // Zone-load guard: the world snapshot lags the live chain by up to one world pass, so right after a
         // zone change its entities/terrain/route still belong to the PREVIOUS area. Only draw them once the
         // snapshot's area hash matches the live one; otherwise draw none this frame (player blip + map still
         // draw). The API still serves the latest snapshot regardless (no visual artifact there).
-        var worldFresh = inGame && snap.InGame && snap.AreaHash == _areaHash;
+        var worldFresh = inGame && snap.InGame && snap.InstanceKey == liveInstanceKey;
         var entities = worldFresh ? snap.Entities : Array.Empty<Poe2Live.EntityDot>();
         var landmarks = worldFresh ? snap.Landmarks : Array.Empty<Poe2Live.Landmark>();
         var terrain = worldFresh ? snap.Terrain : null;
@@ -1324,8 +1341,17 @@ public sealed class RadarApp : IDisposable
     /// </summary>
     private void WorldTick(nint inGameState, nint areaInstance, nint localPlayer)
     {
-        // AreaInstance is a fresh object per area — use its address to invalidate per-area caches.
-        if (areaInstance != _lastAreaInstance) { _terrain = null; _lastAreaInstance = areaInstance; }
+        // The game can recycle the AreaInstance address after a reset. Terrain and tile
+        // allocations provide independent signals; never key terrain solely by area hash.
+        var instanceKey = _live.InstanceKey(areaInstance, localPlayer);
+        if (instanceKey != _lastInstanceKey)
+        {
+            _terrain = null;
+            _nextTerrainRecheckUtc = DateTime.MinValue;
+            _lastAreaInstance = areaInstance;
+            _lastInstanceKey = instanceKey;
+            _live.InvalidateInstanceCaches();
+        }
         var areaHash = _live.AreaHash(areaInstance);
         var areaLevel = _live.AreaLevel(areaInstance);
         var areaCode = _live.AreaCode(areaInstance);
@@ -1338,7 +1364,28 @@ public sealed class RadarApp : IDisposable
         // heal benefited monster bars; with split readers, _live must heal independently. Result discarded.
         _ = _live.PlayerVitals(localPlayer);
         _charLevel = _live.PlayerLevel(localPlayer);   // changes ~never; 30 Hz is plenty
-        _terrain ??= _live.Terrain(areaInstance);
+        // An instance reset can recycle the same game allocation addresses. Do not hold
+        // the old terrain forever just because those addresses (or the unverified area
+        // hash) still match. Sample live grid contents periodically and only publish a
+        // replacement when its dimensions or pixels actually differ.
+        if (_terrain is null || DateTime.UtcNow >= _nextTerrainRecheckUtc)
+        {
+            _nextTerrainRecheckUtc = DateTime.UtcNow.AddSeconds(2);
+            var refreshed = _live.Terrain(areaInstance);
+            if (refreshed is not null &&
+                (_terrain is null || _terrain.Width != refreshed.Width ||
+                 _terrain.Height != refreshed.Height ||
+                 !_terrain.Walkable.AsSpan().SequenceEqual(refreshed.Walkable)))
+            {
+                if (_terrain is not null)
+                {
+                    Console.WriteLine("Poe2Radar: terrain content changed in-place; refreshing map and landmarks.");
+                    _live.InvalidateInstanceCaches();
+                    _navInstanceKey = default;
+                }
+                _terrain = refreshed;
+            }
+        }
         _entities = _live.Entities(areaInstance);
         // Drop the local player's own entity — it lives in the AwakeEntities map like any
         // other Player, but the dedicated center blip already represents "you" (gated by
@@ -1434,8 +1481,9 @@ public sealed class RadarApp : IDisposable
         // On a zone change: drop the (now-stale) selection, then apply the persistent
         // auto-nav patterns against the new zone's targets. Keyed off the AreaInstance
         // address (a fresh object per area), same signal the per-area caches use.
-        if (areaInstance != _navTargetsArea)
+        if (instanceKey != _navInstanceKey)
         {
+            _navInstanceKey = instanceKey;
             _navTargetsArea = areaInstance;
             OnAreaChanged(areaHash);
         }
@@ -1456,7 +1504,7 @@ public sealed class RadarApp : IDisposable
         _legend = BuildLegend(_selectedSnapshot);
 
         // Publish the whole immutable world snapshot atomically for the render thread.
-        _world = new WorldSnapshot(true, areaHash, areaLevel, areaCode, _charLevel,
+        _world = new WorldSnapshot(true, instanceKey, areaHash, areaLevel, areaCode, _charLevel,
             _entities, _landmarks, _terrain, hpSpecs, itemLabels, _selectedPaths, _legend, _selectedSnapshot);
     }
 
@@ -1917,51 +1965,29 @@ public sealed class RadarApp : IDisposable
         return targets;
     }
 
-    /// <summary>Zone change: remember the leaving zone's selection (by its instance hash), then either
-    /// RESTORE the selection we previously had for the zone we're entering (so a town round-trip keeps
-    /// your pathing) or — on a first visit — seed it from the persistent auto-nav patterns. Trackers are
-    /// NOT touched here — the per-tick reconciliation (ReconcileTrackers) syncs them to _selectedIds.</summary>
+    /// <summary>On a confirmed instance transition, discard old route trackers and
+    /// selections. The area hash is unverified and must never be used to restore a
+    /// previous instance's objective. Auto-path rules may select targets found in
+    /// this instance, but old manually selected device routes are not resurrected.</summary>
     private void OnAreaChanged(uint areaHash)
     {
-        int count; bool restored;
+        _routeGeneration++;
+        _trackers.Clear();
+        _selectedPaths = new List<SelectedPath>();
+        int count;
         lock (_navLock)
         {
-            // Save what was selected in the zone we're leaving, keyed by ITS instance hash.
-            if (_selectionAreaHash != 0) RememberZoneSelection(_selectionAreaHash, _selectedIds);
-
             _selectedIds.Clear();
             _selectionCapWarned = false;
-            _selectionAreaHash = areaHash;
-
-            // Returning to a remembered instance → restore its selection verbatim (the user's explicit
-            // choices win, including an intentionally-empty one, so a zone they cleared stays cleared).
-            List<string>? remembered = null;
-            restored = areaHash != 0 && _zoneSelections.TryGetValue(areaHash, out remembered);
-            if (restored)
+            foreach (var t in _navTargets)
             {
-                foreach (var id in remembered!)
-                {
-                    if (_selectedIds.Count >= MaxSelectedTargets) break;
-                    if (!_selectedIds.Contains(id)) _selectedIds.Add(id);
-                }
-            }
-            else
-            {
-                // First visit to this instance: auto-select every target whose display rule opted into
-                // auto-pathing (the per-rule "Auto-path" flag), capped so colors/planning stay bounded.
-                foreach (var t in _navTargets)
-                {
-                    if (_selectedIds.Count >= MaxSelectedTargets) break;
-                    if (t.AutoPath && !_selectedIds.Contains(t.Id))
-                        _selectedIds.Add(t.Id);
-                }
+                if (_selectedIds.Count >= MaxSelectedTargets) break;
+                if (t.AutoPath && !_selectedIds.Contains(t.Id))
+                    _selectedIds.Add(t.Id);
             }
             count = _selectedIds.Count;
         }
-        _selectedPaths = new List<SelectedPath>();
-
-        if (count > 0)
-            Console.WriteLine($"\nNav: {(restored ? "restored" : "auto-selected")} {count} target(s) on zone change.");
+        Console.WriteLine($"Nav: instance change, discarded prior paths; {count} auto-path target(s) in current instance.");
     }
 
     /// <summary>
@@ -1987,22 +2013,6 @@ public sealed class RadarApp : IDisposable
                 return false; // absent (out of range) → keep; it may return
             });
         }
-    }
-
-    /// <summary>Store a copy of <paramref name="ids"/> under <paramref name="hash"/>, evicting the
-    /// oldest remembered zone when the table is full. Call under <see cref="_navLock"/>.</summary>
-    private void RememberZoneSelection(uint hash, List<string> ids)
-    {
-        if (!_zoneSelections.ContainsKey(hash))
-        {
-            if (_zoneOrder.Count >= MaxRememberedZones)
-            {
-                _zoneSelections.Remove(_zoneOrder[0]);
-                _zoneOrder.RemoveAt(0);
-            }
-            _zoneOrder.Add(hash);
-        }
-        _zoneSelections[hash] = new List<string>(ids);
     }
 
     /// <summary>Surfacing matcher fed to Poe2Live: a terrain tile surfaces as a landmark when a user
@@ -2194,7 +2204,12 @@ public sealed class RadarApp : IDisposable
         {
             foreach (var r in results)
             {
-                if (!_trackers.TryGetValue(r.TargetId, out var tracker)) continue; // deselected → ignore
+                // Requests from previous instances can finish later and reuse a target id.
+                // Only apply a completion tagged with this instance's route generation.
+                var prefix = _routeGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":";
+                if (!r.TargetId.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                var id = r.TargetId[prefix.Length..];
+                if (!_trackers.TryGetValue(id, out var tracker)) continue; // deselected → ignore
                 tracker.ApplyResult(r.Waypoints, new NumVec2(r.Goal.x, r.Goal.y));
             }
         }
@@ -2221,8 +2236,11 @@ public sealed class RadarApp : IDisposable
         if (_terrain is not { } terrain) return; // can't plan without terrain yet
         var player = _worldPlayer;   // the world tick's current player (this all runs on the world thread)
         tracker.MarkReplanRequested(player);
+        // Use an internal instance-scoped job id so a late completion from the
+        // previous map can never overwrite the current map's route tracker.
+        var scopedId = _routeGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + id;
         _replanner.Enqueue(new BackgroundReplanner.Request(
-            id, terrain, ((int)player.X, (int)player.Y), ((int)goal.X, (int)goal.Y)));
+            scopedId, terrain, ((int)player.X, (int)player.Y), ((int)goal.X, (int)goal.Y)));
     }
 
     /// <summary>Rebuild <see cref="_selectedPaths"/> from the trackers' CurrentPoints, each colored by
