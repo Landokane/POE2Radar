@@ -45,10 +45,14 @@ quality-of-life feature.
   rules, auto-flask tuning). Served same-origin only; setting/navigation writes are loopback-gated.
   Read endpoints: `GET /state`, `/entities`, `/landmarks`, `/api/icons`.
 
+## Official version for this fork
+
+The `main` branch is the single current development source for Landokane's radar. The separate research/offset grabber remains a development tool, not another overlay distribution. The 2026-11-14 instance-identity workaround uses the live AreaInstance pointer while the genuine hash offset remains unverified. A successful local build is not a verified public release; check the release date and notes before downloading.
+
 ## Download (no build required)
 
 Grab the latest **`POE2Radar-vX.Y.Z-win-x64.zip`** from the
-[Releases page](https://github.com/Sikaka/POE2Radar/releases), unzip, and run `POE2Radar.Overlay.exe`
+[official releases for this fork](https://github.com/Landokane/POE2Radar/releases), unzip, and run `POE2Radar.Overlay.exe`
 **as Administrator** (reading another process's memory requires it) with PoE2 already running.
 The build is self-contained — no .NET install needed.
 
@@ -73,7 +77,7 @@ Reading another process generally requires running the overlay **as Administrato
 To **exit**: right-click the **POE2Radar system-tray icon → Exit**, or press **F9** (or close the
 console window).
 
-Hotkeys: **F8** toggles auto-flask; **F9** quits; **F11** toggles local overlay visibility (saved across restarts); **F12** opens the web dashboard; **F6** routes to
+Hotkeys: **F5** requests a clean in-game overlay restart (foreground only); **F8** toggles auto-flask; **F9** quits; **F11** toggles local overlay visibility (saved across restarts); **F12** opens the web dashboard; **F6** routes to
 the nearest landmark/POI and **F7** clears routes; **F10** (with the Atlas open) inspects the
 hovered tile and sets a route start/end. All other settings live in the dashboard (no calibration
 hotkeys, to avoid accidental presses).
