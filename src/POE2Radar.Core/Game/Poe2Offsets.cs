@@ -67,7 +67,7 @@ public static class Poe2
         public const int SleepingEntities = 0x728; // 2026-11-06 candidate: entity StdMap candidate sampled in two zones; awake/sleeping distinction not independently verified. Prior value retained in git history.
         public const int TerrainMetadata  = 0x8F8; // 2026-11-06 candidate: terrain grid dimensions and byte stride internally consistent in two zones. Prior value retained in git history.
         public const int CurrentAreaLevel = 0x0C4; // 2026-11-06 candidate: Qimah Reservoir displayed level 64 and +0x0C4 read 64; verify in additional zones. Prior value retained in git history.
-        public const int CurrentAreaHash  = 0x114;  // ✓ uint — per-area random hash. 2026-09-05 league patch shifted -0x08 (was 0x11C).
+        public const int CurrentAreaHash  = 0x114;  // INVALID in 2026-11-14 live probe: 0x000005D8 was the upper DWORD of a pointer. Not used by Poe2Live.AreaHash; rediscovery pending.
     }
 
     /// <summary>
