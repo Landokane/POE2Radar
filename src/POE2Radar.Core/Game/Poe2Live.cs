@@ -128,11 +128,27 @@ public sealed class Poe2Live
         return false;
     }
 
-    /// <summary>Per-area instance hash. (Caches key on the AreaInstance address; this is for display/ID.)</summary>
+    /// <summary>
+    /// Temporary per-process area identity until the patch-drifted CurrentAreaHash is rediscovered.
+    /// The 2026-11-14 live probe showed +0x114 = 0x000005D8, the upper dword
+    /// of a pointer, NOT a validated instance hash. Hash the AreaInstance pointer instead,
+    /// so two different live AreaInstance objects cannot share that constant value.
+    /// This identity is only meaningful within one process run, and does not guarantee
+    /// restoration when returning to an instance whose AreaInstance object was reallocated.
+    /// </summary>
     public uint AreaHash(nint areaInstance)
     {
-        _reader.TryReadStruct<uint>(areaInstance + Poe2.AreaInstance.CurrentAreaHash, out var h);
-        return h;
+        if (areaInstance == 0) return 0;
+
+        // FNV-1a over all eight pointer bytes; never use the game's currently
+        // unverified hash offset as a source of per-instance navigation identity.
+        ulong address = unchecked((ulong)(long)areaInstance);
+        uint hash = 2166136261u;
+        for (var i = 0; i < 8; i++)
+        {
+            hash = unchecked((hash ^ (byte)(address >> (i * 8))) * 16777619u);
+        }
+        return hash == 0 ? 1u : hash;
     }
 
     /// <summary>Monster/area level (validated live: 27, 32).</summary>
